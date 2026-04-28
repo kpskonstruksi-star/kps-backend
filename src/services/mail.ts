@@ -1,13 +1,6 @@
-import nodemailer from "nodemailer";
+import { Resend } from "resend";
 
 const DEFAULT_INBOX = "kpskonstruksi@gmail.com";
-
-function isPlaceholderPassword(value: string): boolean {
-  const t = value.trim();
-  if (!t) return true;
-  const lower = t.toLowerCase();
-  return ["isi_app_password_di_sini", "your_app_password", "xxx", "changeme"].includes(lower);
-}
 
 export type ContactMailInput = {
   name: string;
@@ -24,22 +17,6 @@ function escapeHtml(s: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
-}
-
-function buildPlainText(data: ContactMailInput): string {
-  const lines = [
-    "Permintaan konsultasi baru dari website KPS Konstruksi",
-    "",
-    `Nama: ${data.name}`,
-    `WhatsApp/Telepon: ${data.phone}`,
-    data.email ? `Email: ${data.email}` : "Email: (tidak diisi)",
-    `Jenis pekerjaan: ${data.workType}`,
-    `Sumber: ${data.source === "page" ? "Form kontak halaman" : "Popup konsultasi"}`,
-    "",
-    "Pesan / detail:",
-    data.message?.trim() || "(tidak ada pesan tambahan)"
-  ];
-  return lines.join("\n");
 }
 
 function buildHtml(data: ContactMailInput): string {
@@ -64,50 +41,23 @@ function buildHtml(data: ContactMailInput): string {
 }
 
 export async function sendContactMail(data: ContactMailInput): Promise<void> {
-  const to = (process.env.CONTACT_TO_EMAIL ?? DEFAULT_INBOX).trim();
-  const passRaw = (process.env.SMTP_PASS ?? "").trim();
-  const pass = isPlaceholderPassword(passRaw) ? "" : passRaw;
-  const user =
-    (process.env.SMTP_USER ?? "").trim() ||
-    (process.env.CONTACT_TO_EMAIL ?? DEFAULT_INBOX).trim() ||
-    DEFAULT_INBOX;
-
-  if (!pass) {
-    throw new Error(
-      "SMTP_PASS belum diisi dengan benar. Buat file backend/.env (salin dari .env.example), " +
-        "isi SMTP_PASS dengan Sandi aplikasi Gmail (16 karakter), lalu restart server backend. " +
-        "SMTP_USER boleh dikosongkan jika sama dengan " +
-        DEFAULT_INBOX +
-        "."
-    );
+  const apiKey = process.env.RESEND_API_KEY ?? "";
+  if (!apiKey) {
+    throw new Error("RESEND_API_KEY belum diisi di environment variables.");
   }
 
-  const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST ?? "smtp.gmail.com",
-    port: Number(process.env.SMTP_PORT ?? 587),
-    secure: process.env.SMTP_SECURE === "true",
-    auth: { user, pass },
-    tls: { rejectUnauthorized: true }
-  });
+  const resend = new Resend(apiKey);
+  const to = (process.env.CONTACT_TO_EMAIL ?? DEFAULT_INBOX).trim();
 
-  const subject = `[KPS] Konsultasi — ${data.name}`;
-  const replyTo =
-    data.email && data.email.includes("@") ? data.email : undefined;
-
-  const mailFrom = (process.env.MAIL_FROM ?? "").trim();
-  const fromHeader =
-    mailFrom && mailFrom.includes("@")
-      ? mailFrom.includes("<")
-        ? mailFrom
-        : `"KPS Konstruksi" <${mailFrom}>`
-      : `"KPS Konstruksi" <${user}>`;
-
-  await transporter.sendMail({
-    from: fromHeader,
+  const { error } = await resend.emails.send({
+    from: "KPS Konstruksi <onboarding@resend.dev>",
     to,
-    replyTo,
-    subject,
-    text: buildPlainText(data),
-    html: buildHtml(data)
+    replyTo: data.email && data.email.includes("@") ? data.email : undefined,
+    subject: `[KPS] Konsultasi — ${data.name}`,
+    html: buildHtml(data),
   });
+
+  if (error) {
+    throw new Error(error.message);
+  }
 }
